@@ -1,0 +1,224 @@
+
+import android.content.Context;
+import android.content.res.TypedArray;
+import android.graphics.Canvas;
+import android.support.v7.widget.AppCompatTextView;
+import android.text.Layout;
+import android.text.TextUtils;
+import android.util.AttributeSet;
+
+
+
+/**
+ * @Description ：由于在android4.0/+ 已上的系统设置textview的
+ * maxlines和ellipsize，其中如果maxlines超过1行的时候，ellipsize的属性没有效果
+ * 所以自定义该view做中间省略号
+ * @TODO (TODO 待完善成可以末尾省略，自定义Ellipsize的字符等)
+ * @author linpeng.huang
+ */
+public class EllipsizeMiddleTextView extends AppCompatTextView {
+    private static final String DEFAULT_ELLIPSIZE_TEXT = "...";
+
+    private CharSequence mEllipsizeText;
+    private CharSequence mOriginText;
+
+    private int mMaxLines;
+
+    private boolean mIsExactlyMode;
+    private boolean mEnableUpdateOriginText = true;
+
+    public EllipsizeMiddleTextView(Context context) {
+        this(context, null);
+    }
+
+    public EllipsizeMiddleTextView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        TypedArray ta = context.obtainStyledAttributes(attrs, R.styleable.EllipsizeMiddleTextView);
+        mEllipsizeText = ta.getText(R.styleable.EllipsizeMiddleTextView_ellipsize_text);
+
+        if (mEllipsizeText == null) {
+            mEllipsizeText = DEFAULT_ELLIPSIZE_TEXT;
+        }
+        ta.recycle();
+    }
+
+
+    @Override
+    public void setMaxLines(int maxLines) {
+        if (mMaxLines != maxLines) {
+            super.setMaxLines(maxLines);
+            this.mMaxLines = maxLines;
+        }
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        setText(mOriginText);
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        try {
+            mIsExactlyMode = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.EXACTLY;
+            final Layout layout = getLayout();
+            if (layout != null) {
+                //超过设定的maxLine的时候，删除中间多余的字符，换成‘...’
+                if (isExceedMaxLine(layout) || isOutOfBounds(layout)) {
+                    adjustEllipsizeMiddleText(layout);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void setText(CharSequence text, BufferType type) {
+        if (mEnableUpdateOriginText) {
+            mOriginText = text;
+        }
+        super.setText(text, type);
+        if (mIsExactlyMode) {
+            requestLayout();
+        }
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+//        super.onDraw(canvas);
+        final Layout layout = getLayout();
+        if (layout != null) {
+            int x = getPaddingLeft();
+            int y = getPaddingTop() + (int) Math.abs(getPaint().ascent());
+            CharSequence text = getText();
+            int start = 0;
+            int end = 0;
+            float charsWidth = 0;
+            int size = text.length();
+            int maxWidth = getContentWidth();
+            for (int i = 0; i < layout.getLineCount(); i++) {
+                while (charsWidth < maxWidth && end < size) {
+                    charsWidth = getPaint().measureText(text.subSequence(start, (++end)).toString());
+                }
+                if (charsWidth > maxWidth) {
+                    end--;
+                }
+                canvas.drawText(text, start, end, x, y, getPaint());
+                start = end;
+                charsWidth = 0;
+                y = y + (int) Math.abs(getPaint().descent() - getPaint().ascent());
+            }
+        }
+    }
+
+    private int getContentWidth() {
+        Layout layout = getLayout();
+        if (layout != null) {
+            return layout.getWidth() - getPaddingLeft() - getPaddingRight();
+        }
+
+        return -1;
+    }
+
+    private boolean isExceedMaxLine(Layout layout) {
+        return layout.getLineCount() > mMaxLines && mMaxLines > 0;
+    }
+
+    private boolean isOutOfBounds(Layout layout) {
+        return layout.getHeight() > getMeasuredHeight() - getPaddingBottom() - getPaddingTop();
+    }
+
+    /**
+     * 从最大的那一行的中间添加省略号
+     * @param layout
+     */
+    private void adjustEllipsizeMiddleText(Layout layout) {
+        CharSequence originText = mOriginText;
+        int width = getContentWidth();
+        int maxLineCount = Math.max(1, computeMaxLineCount(layout));
+        int maxLineFirstCharIndex = computeWidthIndex(originText, 0, (maxLineCount - 1) * width);
+
+        mEnableUpdateOriginText = false;
+        int ellipizeTextWidth = (int)Layout.getDesiredWidth(mEllipsizeText, getPaint());
+        int origninWidth = (int)Layout.getDesiredWidth(mOriginText, getPaint()) + ellipizeTextWidth;
+        int maxWidth = width * maxLineCount;
+        if (origninWidth > maxWidth) {
+            int widthDiff = origninWidth - maxWidth;
+            int maxLineMidCharIndex = computeWidthIndex(originText, maxLineFirstCharIndex, width >>> 1);
+            int removedMiddleCount = computeRemovedCharCount(originText, maxLineMidCharIndex, widthDiff) + 1;
+
+            CharSequence front = originText.subSequence(0, maxLineMidCharIndex);
+            CharSequence behind = originText.subSequence(maxLineMidCharIndex + removedMiddleCount - 1, mOriginText.length());
+            String result = new StringBuffer(front).append(mEllipsizeText).append(behind).toString();
+            setText(result);
+//            append(mEllipsizeText);
+//            append(behind);
+        }
+        mEnableUpdateOriginText = true;
+    }
+
+    /**
+     * 从当前下标fromIndex开始，找出text中，fromIndex + count字符串长度为width 对应的字符的下标
+     * @param fromIndex
+     * @param width
+     * @return
+     */
+    public int computeWidthIndex(CharSequence text, int fromIndex, int width) {
+        if (TextUtils.isEmpty(text)) {
+            return 0;
+        }
+        CharSequence originText = text;
+        int count = 0;
+        float charsWidth = 0;
+        int length = originText.length();
+        while(charsWidth < width && (++count) < (length - fromIndex)) {
+            String chars = originText.subSequence(fromIndex, fromIndex + count).toString();
+            charsWidth = getPaint().measureText(chars);
+        }
+
+        return fromIndex + count - 1;
+    }
+
+    private int computeMaxLineCount(Layout layout) {
+        int availableHeight = getMeasuredHeight() - getPaddingTop() - getPaddingBottom();
+        for (int i = 0; i < layout.getLineCount(); i++) {
+            if (availableHeight < layout.getLineBottom(i)) {
+                return i;
+            }
+        }
+
+        return layout.getLineCount();
+    }
+
+
+    /**
+     * 将widthDiff长度的字符串给删除
+     * @param text
+     * @param fromIndex
+     * @param widthDiff
+     * @return
+     */
+    private int computeRemovedCharCount(CharSequence text, int fromIndex, int widthDiff) {
+        if (TextUtils.isEmpty(text)) {
+            return 0;
+        }
+
+        int start = fromIndex;
+        int characterIndex = start;
+        float currentRemovedWidth = 0;
+        int length = text.length();
+
+        while (widthDiff > currentRemovedWidth && characterIndex < length) {
+            characterIndex++;
+            currentRemovedWidth = getPaint().measureText(text.subSequence(start, characterIndex).toString());
+        }
+
+        return characterIndex - start + 1;
+    }
+
+    /**
+     * @param ellipsizeText  causes words in the text that are longer than the view is wide
+     *                       to be ellipsized by used the text instead of broken in the middle.
+     * @param ellipsizeIndex the index of the ellipsizeText will be inserted in the reverse order.
+     */
+    public void setEllipsizeText(CharSequence ellipsizeText) {
+        this.mEllipsizeText = ellipsizeText;
+    }
+}
